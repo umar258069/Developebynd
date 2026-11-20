@@ -1,5 +1,4 @@
 python-telegram-bot
 flask
-gTTS
-qrcode
+edge-tts
 Pillow
