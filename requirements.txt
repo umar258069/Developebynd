@@ -3,4 +3,3 @@ flask
 gTTS
 qrcode
 Pillow
-
