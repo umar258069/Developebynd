@@ -1,4 +1,6 @@
 python-telegram-bot
 flask
-httpx
-beautifulsoup4
+gTTS
+qrcode
+Pillow
+
