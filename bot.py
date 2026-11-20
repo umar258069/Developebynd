@@ -7,8 +7,8 @@ import threading
 import httpx
 from bs4 import BeautifulSoup
 from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL = "@trustedbynd"
@@ -33,6 +33,13 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
+# --- NECHE WALA CLEAN MENU (Swiggy Bot jaisa) ---
+def bottom_menu():
+    return ReplyKeyboardMarkup(
+        [["📧 Temp Mail", "📱 New Number"]],
+        resize_keyboard=True
+    )
+
 # --- FORCE JOIN CHECK ---
 async def is_user_joined(user_id: int, bot) -> bool:
     try:
@@ -45,12 +52,6 @@ def join_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 Join Our Channel", url="https://t.me/trustedbynd")],
         [InlineKeyboardButton("✅ Joined / Check", callback_data="check_join")]
-    ])
-
-def main_menu_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📧 Temp Mail (Auto OTP)", callback_data="new_mail")],
-        [InlineKeyboardButton("📱 Free Numbers (Auto OTP)", callback_data="sms_menu")]
     ])
 
 # --- TEMP MAIL (AUTO OTP) ---
@@ -73,13 +74,6 @@ async def create_temp_mail():
         tok_res = await client.post(f"{MAIL_API}/token", json={"address": email, "password": password})
         token = tok_res.json().get("token")
         return email, token
-
-def email_buttons():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 New Email", callback_data="new_mail")],
-        [InlineKeyboardButton("🗑️ Delete Email", callback_data="delete_mail")],
-        [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
-    ])
 
 async def auto_check_inbox(user_id: int, app_bot):
     for _ in range(180):
@@ -109,40 +103,18 @@ async def auto_check_inbox(user_id: int, app_bot):
                             body = body[:1500] + "..."
 
                         otp_match = re.search(r'\b\d{4,8}\b', f"{subject} {body}")
-                        otp_line = f"🔑 **OTP / Code:** `{otp_match.group(0)}`\n" if otp_match else ""
+                        otp_line = f"🔑 **OTP:** `{otp_match.group(0)}`\n\n" if otp_match else ""
 
                         text = (
-                            f"📩 **New Email OTP!**\n\n"
+                            f"📩 **New Mail OTP!**\n\n"
                             f"{otp_line}"
                             f"📧 **To:** `{data['email']}`\n"
                             f"👤 **From:** `{sender}`\n"
-                            f"📌 **Subject:** {subject}\n\n"
                             f"📝 **Message:**\n{body}"
                         )
                         await app_bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
         except Exception:
             continue
-
-async def generate_and_send(chat_id: int, context: ContextTypes.DEFAULT_TYPE, edit_msg=None):
-    if chat_id in user_mails and user_mails[chat_id].get("task"):
-        user_mails[chat_id]["task"].cancel()
-
-    email, token = await create_temp_mail()
-    if not email or not token:
-        err_text = "⚠️ Mail server thoda busy hai, 5 second baad try karein."
-        if edit_msg:
-            await edit_msg.edit_text(err_text, reply_markup=main_menu_keyboard())
-        return
-
-    task = asyncio.create_task(auto_check_inbox(chat_id, context.bot))
-    user_mails[chat_id] = {"email": email, "token": token, "seen_ids": set(), "task": task}
-
-    text = (
-        f"✅ **Your Temporary Email:**\n`{email}`\n*(Tap to copy)*\n\n"
-        f"🔔 **Auto-OTP ON:** Koi bhi OTP ya mail aate hi seedha yahan aa jayega."
-    )
-    if edit_msg:
-        await edit_msg.edit_text(text, parse_mode="Markdown", reply_markup=email_buttons())
 
 # --- FREE SMS NUMBERS (AUTO OTP) ---
 async def fetch_free_numbers():
@@ -194,7 +166,7 @@ async def auto_check_sms(user_id: int, number: str, seen_msgs: set, app_bot):
                 if m_txt not in seen_msgs:
                     seen_msgs.add(m_txt)
                     otp_match = re.search(r'\b\d{4,8}\b', m_txt)
-                    otp_line = f"🔑 **OTP / Code:** `{otp_match.group(0)}`\n" if otp_match else ""
+                    otp_line = f"🔑 **OTP:** `{otp_match.group(0)}`\n\n" if otp_match else ""
                     text = (
                         f"📩 **New SMS OTP!**\n\n"
                         f"{otp_line}"
@@ -209,8 +181,6 @@ async def auto_check_sms(user_id: int, number: str, seen_msgs: set, app_bot):
 # --- HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    await update.message.reply_text("🔄 Loading...", reply_markup=ReplyKeyboardRemove())
-
     if not await is_user_joined(user_id, context.bot):
         await update.message.reply_text(
             "🔒 **Bot use karne ke liye pehle hamara channel join karein!**\n\nJoin karne ke baad neeche **Joined / Check** button dabayein.",
@@ -220,9 +190,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(
-        "👋 **Welcome!**\n\nNeeche se apna tool chunein:",
+        "👋 **Welcome!**\n\nNeeche se **📧 Temp Mail** ya **📱 New Number** dabayein — OTP seedha screen par aayega:",
         parse_mode="Markdown",
-        reply_markup=main_menu_keyboard()
+        reply_markup=bottom_menu()
     )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -232,101 +202,74 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "check_join":
         if await is_user_joined(user_id, context.bot):
             await query.answer("✅ Verified!", show_alert=False)
-            await query.edit_message_text(
-                "🎉 **Thank you for joining!**\n\nNeeche se apna tool chunein:",
+            await query.message.delete()
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="🎉 **Thank you for joining!**\n\nNeeche se **📧 Temp Mail** ya **📱 New Number** dabayein:",
                 parse_mode="Markdown",
-                reply_markup=main_menu_keyboard()
+                reply_markup=bottom_menu()
             )
         else:
             await query.answer("❌ Pehle hamara channel join karein!", show_alert=True)
-        return
 
-    await query.answer()
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text
 
     if not await is_user_joined(user_id, context.bot):
-        await query.edit_message_text(
-            "🔒 **Bot use karne ke liye pehle hamara channel join karein!**",
+        await update.message.reply_text(
+            "🔒 **Pehle hamara channel join karein!**",
             parse_mode="Markdown",
             reply_markup=join_keyboard()
         )
         return
 
-    if query.data == "main_menu":
-        await query.edit_message_text(
-            "🏠 **Main Menu**\n\nApna tool chunein:",
-            parse_mode="Markdown",
-            reply_markup=main_menu_keyboard()
-        )
+    if text == "📧 Temp Mail":
+        wait = await update.message.reply_text("⏳ Email ban raha hai...")
+        if user_id in user_mails and user_mails[user_id].get("task"):
+            user_mails[user_id]["task"].cancel()
 
-    elif query.data == "new_mail":
-        await query.edit_message_text("⏳ Creating your temporary email...")
-        await generate_and_send(user_id, context, edit_msg=query.message)
-
-    elif query.data == "delete_mail":
-        if user_id in user_mails:
-            if user_mails[user_id].get("task"):
-                user_mails[user_id]["task"].cancel()
-            del user_mails[user_id]
-        await query.edit_message_text(
-            "🗑️ **Email deleted!**",
-            parse_mode="Markdown",
-            reply_markup=main_menu_keyboard()
-        )
-
-    elif query.data == "sms_menu":
-        await query.edit_message_text("⏳ Free SMS numbers load ho rahe hain...")
-        nums = await fetch_free_numbers()
-        if not nums:
-            await query.edit_message_text(
-                "⚠️ Free SMS server abhi busy hai. Thodi der baad try karein.",
-                reply_markup=main_menu_keyboard()
-            )
+        email, token = await create_temp_mail()
+        if not email or not token:
+            await wait.edit_text("⚠️ Server busy hai, 5 second baad dubara dabayein.")
             return
 
-        sample_nums = random.sample(nums, min(10, len(nums)))
-        keyboard = []
-        for i in range(0, len(sample_nums), 2):
-            row = [InlineKeyboardButton(f"📱 +{sample_nums[i]}", callback_data=f"sms_num_{sample_nums[i]}")]
-            if i + 1 < len(sample_nums):
-                row.append(InlineKeyboardButton(f"📱 +{sample_nums[i+1]}", callback_data=f"sms_num_{sample_nums[i+1]}"))
-            keyboard.append(row)
-        keyboard.append([InlineKeyboardButton("🔄 More Numbers", callback_data="sms_menu")])
-        keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")])
+        task = asyncio.create_task(auto_check_inbox(user_id, context.bot))
+        user_mails[user_id] = {"email": email, "token": token, "seen_ids": set(), "task": task}
 
-        await query.edit_message_text(
-            f"📱 **Free Public Numbers ({len(nums)} Active)**\n\nKisi bhi number par tap karein (OTP direct aayega):",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+        await wait.edit_text(
+            f"📧 **Temp Mail:**\n`{email}` *(Tap to copy)*\n\n🔔 **Auto-OTP ON:** OTP aate hi seedha yahan aa jayega.",
+            parse_mode="Markdown"
         )
 
-    elif query.data.startswith("sms_num_"):
-        num = query.data.replace("sms_num_", "")
+    elif text == "📱 New Number":
+        wait = await update.message.reply_text("⏳ Naya number nikal raha hai...")
+        nums = await fetch_free_numbers()
+        if not nums:
+            await wait.edit_text("⚠️ Free SMS server abhi busy hai. Thodi der baad try karein.")
+            return
+
+        num = random.choice(nums)
         if user_id in user_sms_tasks:
             user_sms_tasks[user_id].cancel()
 
-        await query.edit_message_text(f"⏳ `+{num}` connect ho raha hai...", parse_mode="Markdown")
         initial_msgs = await fetch_sms_messages(num)
         seen_msgs = {m_txt for _, m_txt in initial_msgs}
-
         user_sms_tasks[user_id] = asyncio.create_task(auto_check_sms(user_id, num, seen_msgs, context.bot))
 
-        text = (
-            f"📱 **Selected Number:** `+{num}`\n*(Tap to copy)*\n\n"
-            f"🔔 **Auto-OTP ON:** Is number par OTP bhejein, aate hi seedha yahan aa jayega."
+        await wait.edit_text(
+            f"📱 **New Number:**\n`+{num}` *(Tap to copy)*\n\n🔔 **Auto-OTP ON:** Is par OTP bhejein, aate hi seedha yahan aa jayega.",
+            parse_mode="Markdown"
         )
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Change Number", callback_data="sms_menu")],
-            [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
-        ])
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
 
 def main():
     threading.Thread(target=run_web, daemon=True).start()
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
-                    
+    
