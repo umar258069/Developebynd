@@ -132,7 +132,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Menu selection
     if text == "🎙️ Text to Voice":
         await update.message.reply_text(
             "🎭 **Apna Character / Awaaz chunein:**",
@@ -146,7 +145,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📄 **Koi bhi photo bhejein**, main uski PDF bana kar de dunga:", parse_mode="Markdown")
         return
 
-    # Tool execution
     mode = user_mode.get(user_id)
 
     if mode == "tts":
@@ -189,5 +187,23 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         pdf_io = io.BytesIO()
         img.save(pdf_io, format="PDF")
-        pdf_io.
-        
+        pdf_io.seek(0)
+        pdf_io.name = "document.pdf"
+
+        await update.message.reply_document(document=pdf_io, caption="✅ Ye lo aapki PDF file!")
+        await wait.delete()
+    except Exception:
+        await wait.edit_text("⚠️ PDF banane mein error aaya, dubara photo bhejein.")
+
+def main():
+    threading.Thread(target=run_web, daemon=True).start()
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    app.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
+    
