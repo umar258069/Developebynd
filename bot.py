@@ -6,7 +6,6 @@ import string
 import asyncio
 import threading
 import httpx
-import edge_tts
 from PIL import Image
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
@@ -16,10 +15,8 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 JSONBIN_ID = os.environ.get("JSONBIN_ID", "")
 JSONBIN_KEY = os.environ.get("JSONBIN_KEY", "")
 
-# Dono Force-Join Channels
 CHANNELS = ["@trustedbynd", "@legendpanel66"]
 
-# 24/7 Keep-Alive Web Server (Render ke liye)
 web_app = Flask(__name__)
 
 @web_app.route('/')
@@ -123,7 +120,6 @@ def generate_fake_pan():
     year = random.randint(1975, 2004)
     dob = f"{day:02d}/{month:02d}/{year}"
 
-    # Standard 10-char PAN format: 3 random letters + 'P' + Surname 1st letter + 4 digits + 1 letter
     p1 = "".join(random.choices(string.ascii_uppercase, k=3))
     p2 = "P"
     p3 = lname[0].upper()
@@ -133,46 +129,20 @@ def generate_fake_pan():
 
     return full_name, father, dob, pan_no
 
-user_mode = {}
-user_voice = {}
 upload_category = {}
 user_vid_idx = {}
-
-# --- 10 MAST CHARACTER VOICES ---
-VOICES = {
-    "hero": ("😎 Hero (Bhari Awaaz)", "hi-IN-MadhurNeural", "-5%", "-12Hz"),
-    "real_girl": ("👩 Real Girl (Hindi)", "hi-IN-SwaraNeural", "+0%", "+0Hz"),
-    "cute_girl": ("👧 Cute Ladki", "hi-IN-SwaraNeural", "+5%", "+18Hz"),
-    "normal_boy": ("👨 Normal Boy (Hindi)", "hi-IN-MadhurNeural", "+0%", "+0Hz"),
-    "story": ("🧔 Storyteller / Horror", "hi-IN-MadhurNeural", "-12%", "-18Hz"),
-    "cartoon": ("🤡 Funny / Cartoon", "hi-IN-SwaraNeural", "+15%", "+35Hz"),
-    "eng_boy": ("🇮🇳 Indian Eng Boy", "en-IN-PrabhatNeural", "+0%", "+0Hz"),
-    "eng_girl": ("🇮🇳 Indian Eng Girl", "en-IN-NeerjaNeural", "+0%", "+0Hz"),
-    "us_hero": ("🇺🇸 Hollywood Hero", "en-US-ChristopherNeural", "-5%", "-8Hz"),
-    "us_girl": ("🇺🇸 Hollywood Girl", "en-US-AriaNeural", "+0%", "+0Hz"),
-}
 
 # --- NECHE WALA CLEAN MENU ---
 def bottom_menu():
     return ReplyKeyboardMarkup(
         [
             ["🇯🇵 Japanese", "🇮🇳 Desi", "🔥 Hot"],
-            ["🎙️ Text to Voice", "📄 Photo to PDF"],
+            ["📄 Photo to PDF", "🪪 Fake PAN Info"],
             ["🎁 Daily Spin", "💰 My Credits", "🔗 Referral"],
-            ["🪪 Fake PAN Info", "🏆 Leaderboard"]
+            ["🏆 Leaderboard"]
         ],
         resize_keyboard=True
     )
-
-def voice_keyboard():
-    keys = list(VOICES.keys())
-    keyboard = []
-    for i in range(0, len(keys), 2):
-        row = [InlineKeyboardButton(VOICES[keys[i]][0], callback_data=f"voice_{keys[i]}")]
-        if i + 1 < len(keys):
-            row.append(InlineKeyboardButton(VOICES[keys[i+1]][0], callback_data=f"voice_{keys[i+1]}"))
-        keyboard.append(row)
-    return InlineKeyboardMarkup(keyboard)
 
 # --- FORCE JOIN CHECK (DONO CHANNELS) ---
 async def is_user_joined(user_id: int, bot) -> bool:
@@ -259,16 +229,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     uid = str(user_id)
-    user_mode.pop(user_id, None)
 
     db_data["names"][uid] = clean_name(user.first_name)
 
     is_new = user_id not in db_data["users"]
     if is_new:
         db_data["users"].append(user_id)
-        db_data["credits"][uid] = 10  # Naye user ko 10 Credits
+        db_data["credits"][uid] = 10
 
-        # Referral check (+8 Credits)
         if context.args:
             ref_id = context.args[0]
             if ref_id.isdigit() and ref_id != uid:
@@ -358,19 +326,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await query.answer("❌ Pehle dono channels join karein!", show_alert=True)
-        return
-
-    if query.data.startswith("voice_"):
-        v_key = query.data.replace("voice_", "")
-        if v_key in VOICES:
-            user_voice[user_id] = v_key
-            user_mode[user_id] = "tts"
-            v_name = VOICES[v_key][0]
-            await query.answer(f"Selected: {v_name}")
-            await query.edit_message_text(
-                f"✅ **Selected Character:** {v_name}\n\nAb apna **text bhejein**, main isi awaaz mein audio bana dunga!",
-                parse_mode="Markdown"
-            )
 
 # --- TEXT HANDLER ---
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -411,16 +366,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_video(video=vid_id, caption=caption)
         return
 
-    elif text == "🎙️ Text to Voice":
-        await update.message.reply_text(
-            "🎭 **Apna Character / Awaaz chunein:**",
-            parse_mode="Markdown",
-            reply_markup=voice_keyboard()
-        )
-        return
-
     elif text == "📄 Photo to PDF":
-        user_mode[user_id] = "pdf"
         await update.message.reply_text("📄 **Koi bhi photo bhejein**, main uski PDF bana kar de dunga:", parse_mode="Markdown")
         return
 
@@ -519,25 +465,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
         return
 
-    mode = user_mode.get(user_id)
-
-    if mode == "tts":
-                v_key = user_voice.get(user_id, "hero")
-        v_name, voice_id, rate, pitch = VOICES[v_key]
-        wait = await update.message.reply_text(f"⏳ {v_name} mein audio ban rahi hai...")
-        try:
-            communicate = edge_tts.Communicate(text[:1000], voice_id, rate=rate, pitch=pitch)
-            audio_io = io.BytesIO()
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    audio_io.write(chunk["data"])
-            audio_io.seek(0)
-            audio_io.name = "voice.mp3"
-            await update.message.reply_audio(audio=audio_io, caption=f"✅ {v_name}")
-            await wait.delete()
-        except Exception:
-            await wait.edit_text("⚠️ Audio banane mein error aaya, dubara try karein.")
-
     else:
         await update.message.reply_text("👇 Pehle neeche se koi option chunein:", reply_markup=bottom_menu())
 
@@ -554,7 +481,6 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Admin ko user ki photo bhejo
     admin_id = db_data.get("admin_id", 0)
     if admin_id and user_id != admin_id:
         uname = f"@{user.username}" if user.username else "No Username"
@@ -605,7 +531,7 @@ async def video_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caption = update.message.caption or ""
     db_data["videos"][cat].append([video.file_id, caption])
     await save_db()
-    await update.message.reply_text(
+        await update.message.reply_text(
         f"✅ **{cat.upper()}** mein video permanent save ho gayi! (Total: {len(db_data['videos'][cat])})",
         parse_mode="Markdown"
     )
