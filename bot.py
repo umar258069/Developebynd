@@ -530,8 +530,9 @@ async def video_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = update.message.video
     caption = update.message.caption or ""
     db_data["videos"][cat].append([video.file_id, caption])
+    
     await save_db()
-        await update.message.reply_text(
+    await update.message.reply_text(
         f"✅ **{cat.upper()}** mein video permanent save ho gayi! (Total: {len(db_data['videos'][cat])})",
         parse_mode="Markdown"
     )
