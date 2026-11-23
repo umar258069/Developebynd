@@ -2,6 +2,8 @@ import os
 import io
 import time
 import random
+import string
+import asyncio
 import threading
 import httpx
 import edge_tts
@@ -32,15 +34,18 @@ def run_web():
 db_data = {
     "admin_id": 0,
     "users": [],
+    "names": {},
     "videos": {"japanese": [], "desi": [], "hot": []},
     "credits": {},
     "last_spin": {},
-    "referrals": {}
+    "referrals": {},
+    "pan_uses": {}
 }
 
 def load_db():
     global db_data
     if not JSONBIN_ID or not JSONBIN_KEY:
+        print("JSONBIN_ID ya JSONBIN_KEY missing hai!")
         return
     try:
         r = httpx.get(
@@ -52,6 +57,7 @@ def load_db():
             rec = r.json().get("record", {})
             db_data["admin_id"] = rec.get("admin_id", 0)
             db_data["users"] = rec.get("users", [])
+            db_data["names"] = rec.get("names", {})
             vids = rec.get("videos", {})
             db_data["videos"] = {
                 "japanese": vids.get("japanese", []),
@@ -61,27 +67,71 @@ def load_db():
             db_data["credits"] = rec.get("credits", {})
             db_data["last_spin"] = rec.get("last_spin", {})
             db_data["referrals"] = rec.get("referrals", {})
-    except Exception:
-        pass
+            db_data["pan_uses"] = rec.get("pan_uses", {})
+            print("DB Loaded Successfully!")
+        else:
+            print("DB Load Error:", r.status_code, r.text)
+    except Exception as e:
+        print("DB Load Exception:", e)
 
 async def save_db():
     if not JSONBIN_ID or not JSONBIN_KEY:
         return
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.put(
+            r = await client.put(
                 f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}",
                 headers={"Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY},
                 json=db_data
             )
-    except Exception:
-        pass
+            if r.status_code != 200:
+                print("DB Save Error:", r.status_code, r.text)
+    except Exception as e:
+        print("DB Save Exception:", e)
 
 def get_credits(user_id: int) -> int:
     uid = str(user_id)
     if uid not in db_data["credits"]:
         db_data["credits"][uid] = 10
     return db_data["credits"][uid]
+
+def clean_name(name: str) -> str:
+    if not name:
+        return "User"
+    return name.replace("_", " ").replace("*", "").replace("`", "")[:20]
+
+def generate_fake_pan():
+    first_names = [
+        "Aarav", "Rohan", "Vikram", "Aditya", "Rahul", "Karan", "Amit", "Suresh", "Deepak", "Nikhil",
+        "Priya", "Ananya", "Neha", "Pooja", "Sneha", "Kavita", "Riya", "Simran", "Anjali", "Meera"
+    ]
+    father_first = [
+        "Rajesh", "Mahesh", "Ramesh", "Sanjay", "Vijay", "Manoj", "Ashok", "Dinesh", "Prakash", "Rakesh",
+        "Sunil", "Anil", "Mukesh", "Naresh", "Harish", "Vinod", "Pramod", "Subhash", "Mohan", "Gopal"
+    ]
+    last_names = [
+        "Sharma", "Verma", "Gupta", "Patel", "Singh", "Kumar", "Yadav", "Joshi", "Mehta", "Nair",
+        "Reddy", "Das", "Mishra", "Tiwari", "Pandey", "Chauhan", "Thakur", "Bansal", "Agarwal", "Kapoor"
+    ]
+    fname = random.choice(first_names)
+    lname = random.choice(last_names)
+    father = f"{random.choice(father_first)} {lname}"
+    full_name = f"{fname} {lname}"
+
+    day = random.randint(1, 28)
+    month = random.randint(1, 12)
+    year = random.randint(1975, 2004)
+    dob = f"{day:02d}/{month:02d}/{year}"
+
+    # Standard 10-char PAN format: 3 random letters + 'P' + Surname 1st letter + 4 digits + 1 letter
+    p1 = "".join(random.choices(string.ascii_uppercase, k=3))
+    p2 = "P"
+    p3 = lname[0].upper()
+    p4 = "".join(random.choices(string.digits, k=4))
+    p5 = random.choice(string.ascii_uppercase)
+    pan_no = f"{p1}{p2}{p3}{p4}{p5}"
+
+    return full_name, father, dob, pan_no
 
 user_mode = {}
 user_voice = {}
@@ -108,7 +158,8 @@ def bottom_menu():
         [
             ["🇯🇵 Japanese", "🇮🇳 Desi", "🔥 Hot"],
             ["🎙️ Text to Voice", "📄 Photo to PDF"],
-            ["🎁 Daily Spin", "💰 My Credits", "🔗 Referral"]
+            ["🎁 Daily Spin", "💰 My Credits", "🔗 Referral"],
+            ["🪪 Fake PAN Info", "🏆 Leaderboard"]
         ],
         resize_keyboard=True
     )
@@ -146,7 +197,7 @@ async def set_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db_data["admin_id"] = update.effective_user.id
     await save_db()
     await update.message.reply_text(
-        "✅ **Admin Permanent Save Ho Gaya!**\n\nAb jab bhi koi bot `/start` karega, turant aapko message aa jayega.",
+        "✅ **Admin Permanent Save Ho Gaya!**\n\nAb `/start` notifications, user photos, aur `/broadcast` sab aapke liye active hain.",
         parse_mode="Markdown"
     )
 
@@ -161,12 +212,56 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = db_data.get("admin_id", 0)
+    if update.effective_user.id != admin_id:
+        await update.message.reply_text("❌ Ye command sirf Admin ke liye hai!")
+        return
+
+    reply_msg = update.message.reply_to_message
+    msg_text = " ".join(context.args) if context.args else ""
+
+    if not reply_msg and not msg_text:
+        await update.message.reply_text(
+            "📢 **Broadcast kaise karein:**\n\n"
+            "1️⃣ Seedha text bhejein: `/broadcast Hello sabko!`\n"
+            "2️⃣ Ya kisi bhi **Photo / Video / Post** par reply karke `/broadcast` likhein.",
+            parse_mode="Markdown"
+        )
+        return
+
+    users = db_data.get("users", [])
+    status = await update.message.reply_text(f"⏳ **{len(users)} users** ko broadcast bheja ja raha hai...", parse_mode="Markdown")
+    sent, failed = 0, 0
+
+    for uid in users:
+        try:
+            if reply_msg:
+                await context.bot.copy_message(
+                    chat_id=uid,
+                    from_chat_id=update.effective_chat.id,
+                    message_id=reply_msg.message_id
+                )
+            else:
+                await context.bot.send_message(chat_id=uid, text=msg_text)
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+
+    await status.edit_text(
+        f"✅ **Broadcast Complete!**\n\n📤 Sent: **{sent}**\n❌ Failed/Blocked: **{failed}**",
+        parse_mode="Markdown"
+    )
+
 # --- COMMANDS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     uid = str(user_id)
     user_mode.pop(user_id, None)
+
+    db_data["names"][uid] = clean_name(user.first_name)
 
     is_new = user_id not in db_data["users"]
     if is_new:
@@ -182,7 +277,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await context.bot.send_message(
                         chat_id=int(ref_id),
-                        text=f"🎉 **New Referral!**\n\n👤 {user.full_name} ne aapke link se join kiya!\n💰 **+8 Credits** add ho gaye.\n🏦 Total Balance: **{db_data['credits'][ref_id]}**",
+                        text=f"🎉 **New Referral!**\n\n👤 {clean_name(user.full_name)} ne aapke link se join kiya!\n💰 **+8 Credits** add ho gaye.\n🏦 Total Balance: **{db_data['credits'][ref_id]}**",
                         parse_mode="Markdown"
                     )
                 except Exception:
@@ -191,7 +286,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         if uid not in db_data["credits"]:
             db_data["credits"][uid] = 10
-            await save_db()
+        await save_db()
 
     admin_id = db_data.get("admin_id", 0)
     if admin_id and user_id != admin_id:
@@ -202,7 +297,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=admin_id,
                 text=(
                     f"🔔 **{tag} Started Bot!**\n\n"
-                    f"👤 **Name:** {user.full_name}\n"
+                    f"👤 **Name:** {clean_name(user.full_name)}\n"
                     f"🔗 **Username:** {uname}\n"
                     f"🆔 **ID:** `{user_id}`\n"
                     f"👥 **Total Users:** {len(db_data['users'])}"
@@ -222,7 +317,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     bal = get_credits(user_id)
     await update.message.reply_text(
-        f"👋 **Welcome {user.first_name}!**\n\n💰 **Aapka Balance:** {bal} Credits\n\nNeeche se koi bhi option chunein:",
+        f"👋 **Welcome {clean_name(user.first_name)}!**\n\n💰 **Aapka Balance:** {bal} Credits\n\nNeeche se koi bhi option chunein:",
         parse_mode="Markdown",
         reply_markup=bottom_menu()
     )
@@ -279,9 +374,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- TEXT HANDLER ---
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
     uid = str(user_id)
     text = update.message.text
+
+    if uid not in db_data["names"]:
+        db_data["names"][uid] = clean_name(user.first_name)
 
     if not await is_user_joined(user_id, context.bot):
         await update.message.reply_text(
@@ -370,94 +469,57 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    mode = user_mode.get(user_id)
+    elif text == "🪪 Fake PAN Info":
+        uses = db_data["pan_uses"].get(uid, 0)
+        bal = get_credits(user_id)
 
-    if mode == "tts":
-        v_key = user_voice.get(user_id, "hero")
-        v_name, voice_id, rate, pitch = VOICES[v_key]
-        wait = await update.message.reply_text(f"⏳ {v_name} mein audio ban rahi hai...")
-        try:
-            communicate = edge_tts.Communicate(text[:1000], voice_id, rate=rate, pitch=pitch)
-            audio_io = io.BytesIO()
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    audio_io.write(chunk["data"])
-            audio_io.seek(0)
-            audio_io.name = "voice.mp3"
-            await update.message.reply_audio(audio=audio_io, caption=f"✅ {v_name}")
-            await wait.delete()
-        except Exception:
-            await wait.edit_text("⚠️ Audio banane mein error aaya, dubara try karein.")
+        if uses >= 4:
+            if bal < 1:
+                await update.message.reply_text(
+                    "❌ **Aapke paas Credits khatam ho gaye hain!**\n\n"
+                    "🎁 **Daily Spin** karein ya **🔗 Referral** se +8 Credits kamayein.",
+                    parse_mode="Markdown"
+                )
+                return
+            bal -= 1
+            db_data["credits"][uid] = bal
+            cost_note = f"💸 **-1 Credit** | 💰 Balance: **{bal}**"
+        else:
+            free_left = 3 - uses
+            cost_note = f"🆓 **FREE Use** ({free_left} free left, uske baad 1 Credit/use)"
 
-    else:
-        await update.message.reply_text("👇 Pehle neeche se koi option chunein:", reply_markup=bottom_menu())
+        db_data["pan_uses"][uid] = uses + 1
+        await save_db()
 
-# --- PHOTO HANDLER (PHOTO TO PDF) ---
-async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-
-    if not await is_user_joined(user_id, context.bot):
+        full_name, father, dob, pan_no = generate_fake_pan()
         await update.message.reply_text(
-            "🔒 **Pehle hamare dono channels join karein!**",
-            parse_mode="Markdown",
-            reply_markup=join_keyboard()
-        )
-        return
-
-    wait = await update.message.reply_text("⏳ PDF ban rahi hai...")
-    try:
-        photo_file = await update.message.photo[-1].get_file()
-        img_bytes = await photo_file.download_as_bytearray()
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-
-        pdf_io = io.BytesIO()
-        img.save(pdf_io, format="PDF")
-        pdf_io.seek(0)
-        pdf_io.name = "document.pdf"
-
-        await update.message.reply_document(document=pdf_io, caption="✅ Ye lo aapki PDF file!")
-        await wait.delete()
-    except Exception:
-        await wait.edit_text("⚠️ PDF banane mein error aaya, dubara photo bhejein.")
-
-# --- VIDEO HANDLER (PERMANENT SAVE) ---
-async def video_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    cat = upload_category.get(user_id)
-
-    if not cat:
-        await update.message.reply_text(
-            "👇 Pehle category select karein:\n\n`/add_japanese`\n`/add_desi`\n`/add_hot`\n\nUske baad video bhejein!",
+            f"🪪 **Fake PAN Details (Dummy/Test):**\n\n"
+            f"🔢 **PAN Number:** `{pan_no}`\n"
+            f"👤 **Name:** `{full_name}`\n"
+            f"👨 **Father's Name:** `{father}`\n"
+            f"🎂 **DOB:** `{dob}`\n\n"
+            f"{cost_note}",
             parse_mode="Markdown"
         )
         return
 
-    video = update.message.video
-    caption = update.message.caption or ""
-    db_data["videos"][cat].append([video.file_id, caption])
-    await save_db()
-    await update.message.reply_text(
-        f"✅ **{cat.upper()}** mein video permanent save ho gayi! (Total: {len(db_data['videos'][cat])})",
-        parse_mode="Markdown"
-    )
+    elif text == "🏆 Leaderboard":
+        credits_dict = db_data.get("credits", {})
+        if not credits_dict:
+            await update.message.reply_text("🏆 Abhi leaderboard khaali hai!")
+            return
+        top_users = sorted(credits_dict.items(), key=lambda x: x[1], reverse=True)[:5]
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+        lines = ["🏆 **TOP 5 LEADERBOARD** 🏆\n"]
+        for i, (u_id, cr) in enumerate(top_users):
+            name = db_data["names"].get(u_id, f"User {u_id[-4:]}")
+            refs = db_data["referrals"].get(u_id, 0)
+            lines.append(f"{medals[i]} **{name}** — 💰 `{cr}` Credits | 👥 `{refs}` Refs")
+        lines.append("\n🔥 *Daily Spin aur Refer karke #1 par aayein!*")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        return
 
-def main():
-    load_db()
-    threading.Thread(target=run_web, daemon=True).start()
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("setadmin", set_admin))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("add_japanese", set_add_japanese))
-    app.add_handler(CommandHandler("add_desi", set_add_desi))
-    app.add_handler(CommandHandler("add_hot", set_add_hot))
-    app.add_handler(CommandHandler("clearvideos", clear_videos))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-    app.add_handler(MessageHandler(filters.VIDEO, video_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-    app.run_polling(drop_pending_updates=True)
+    mode = user_mode.get(user_id)
 
-if __name__ == "__main__":
-    main()
-    
+    if mode == "tts":
+        v_key = user_voice.get(user_id, "he
